@@ -58,7 +58,7 @@ export class Messages extends MessagesBase {
     this.addIntroductoryMessages(deepChat, serviceIO);
     new History(deepChat, this, serviceIO);
     this._displayServiceErrorMessages = deepChat.errorMessages?.displayServiceErrorMessages;
-    deepChat.getMessages = () => JSON.parse(JSON.stringify(this.messages));
+    deepChat.getMessages = () => JSON.parse(JSON.stringify(this.messageToElements.map(([msg]) => msg)));
     deepChat.clearMessages = this.clearMessages.bind(this, serviceIO);
     deepChat.refreshMessages = this.refreshTextMessages.bind(this);
     deepChat.scrollToBottom = ElementUtils.scrollToBottom.bind(this, this.elementRef);
@@ -178,7 +178,10 @@ export class Messages extends MessagesBase {
   }
 
   private updateStateOnMessage(messageContent: MessageContentI, overwritten?: boolean, update = true, isHistory = false) {
-    if (!overwritten) this.messages.push(messageContent);
+    if (!overwritten) {
+      const messageBody = MessageUtils.generateMessageBody(messageContent, this.messageElementRefs);
+      this.messageToElements.push([messageContent, messageBody]);
+    }
     if (update) this.sendClientUpdate(messageContent, isHistory);
   }
 
@@ -197,7 +200,7 @@ export class Messages extends MessagesBase {
     this.removeMessageOnError();
     const text = this.getPermittedMessage(message) || this._errorMessageOverrides?.[type]
       || this._errorMessageOverrides?.default || 'Error, please try again.';
-    const messageElements = this.createMessageElementsOnOrientation(text, '', isTop);
+    const messageElements = this.createMessageElementsOnOrientation(text, 'error', isTop);
     MessageUtils.hideRoleElements(this.messageElementRefs, !!this._avatars, !!this._names);
     const {bubbleElement, outerContainer} = messageElements;
     bubbleElement.classList.add('error-message-text');
@@ -318,18 +321,12 @@ export class Messages extends MessagesBase {
   // WORK - update all message classes to use deep-chat prefix
   private clearMessages(serviceIO: ServiceIO, isReset?: boolean) {
     const retainedElements: MessageElements[] = [];
-    const retainedTextElemenets: [MessageElements, string][] = [];
     this.messageElementRefs.forEach((message) => {
-      const bubbleClasslist = message.bubbleElement.classList;
-      if (Messages.isActiveElement(bubbleClasslist)) {
+      if (Messages.isActiveElement(message.bubbleElement.classList)) {
         retainedElements.push(message);
       } else {
         message.outerContainer.remove();
       }
-    });
-    this.textElementsToText.forEach((textElementToText) => {
-      const bubbleClasslist = textElementToText[0].bubbleElement.classList;
-      if (Messages.isActiveElement(bubbleClasslist)) retainedTextElemenets.push(textElementToText);
     });
     // this is a form of cleanup as this.messageElementRefs does not contain error messages
     // and can only be deleted by direct search
@@ -340,12 +337,18 @@ export class Messages extends MessagesBase {
       }
     });
     this.messageElementRefs = retainedElements;
-    this.messages.splice(0, this.messages.length);
+    const retainedMessageToElements = this.messageToElements.filter((msgToEls) => {
+      // safe because streamed messages can't contain multiple props (text, html)
+      return (
+        (msgToEls[1].text && Messages.isActiveElement(msgToEls[1].text.bubbleElement.classList)) ||
+        (msgToEls[1].html && Messages.isActiveElement(msgToEls[1].html.bubbleElement.classList))
+      );
+    });
+    this.messageToElements.splice(0, this.messageToElements.length, ...retainedMessageToElements);
     if (isReset !== false) {
       if (this._introPanel?._elementRef) this._introPanel.display();
       this.addIntroductoryMessages();
     }
-    this.textElementsToText = retainedTextElemenets;
     this._onClearMessages?.();
     delete serviceIO.sessionId;
   }
